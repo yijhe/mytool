@@ -24,7 +24,7 @@ body{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang T
 h1,h2,h3,.display{font-family:'Fraunces','Noto Serif TC',Georgia,serif;}
 button{font-family:inherit;}
 .hidden{display:none !important;}
-.mono,.amount,.num{font-family:'IBM Plex Mono',ui-monospace,monospace;font-variant-numeric:tabular-nums;}
+.mono,.amount,.num{font-family:'IBM Plex Mono',ui-monospace,monospace;font-variant-numeric:tabular-nums;white-space:nowrap;}
 ::-webkit-scrollbar{height:8px;width:8px;}
 ::-webkit-scrollbar-thumb{background:var(--border);border-radius:8px;}
 
@@ -666,6 +666,20 @@ function renderOverviewTab(){
   }
   const memberRows=state.accounts.filter(a=>a.active).map(a=>{ const m=cur.byMember[a.id]||{income:0,expense:0}; return {name:a.name, role:a.role, income:m.income, expense:m.expense, net:m.income-m.expense}; }).filter(r=>r.income>0||r.expense>0);
 
+  const _aw=(state.wallets||[]).filter(w=>w.active);
+  const _nw=totalNetWorth();
+  function _balHtml(bal,fz){ const c=bal<0?'color:var(--debit);':''; return '<div style="display:flex;align-items:center;font-size:'+fz+'px;font-weight:700;font-family:\'IBM Plex Mono\',monospace;white-space:nowrap;'+c+'">'+(bal<0?'<span>-</span><span>$'+Math.abs(Math.round(bal)).toLocaleString("zh-TW")+'</span>':'<span>$'+Math.round(bal).toLocaleString("zh-TW")+'</span>')+'</div>'; }
+  const walletCardHtml = _aw.length===0 ? "" :
+    '<div class="card card-pad" style="margin-bottom:16px;">'+
+    '<div class="section-title">💳 錢包餘額 <small>即時資產分佈</small></div>'+
+    '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(148px,1fr));gap:10px;margin-bottom:14px;">'+
+    _aw.map(w=>{ const bal=walletBalance(w.id); return '<div style="background:var(--paper-line);border-radius:10px;padding:11px 13px;"><div style="font-size:11.5px;color:var(--text-soft);margin-bottom:5px;">'+(WALLET_ICONS[w.type]||"📦")+' '+escapeHtml(w.name)+'</div>'+_balHtml(bal,16)+'</div>'; }).join("")+
+    '</div>'+
+    '<div style="padding-top:12px;border-top:1px solid var(--paper-line);display:flex;justify-content:space-between;align-items:center;">'+
+    '<span style="font-size:13px;color:var(--text-soft);font-weight:600;">總資產合計</span>'+
+    _balHtml(_nw,19).replace('display:flex;','display:flex;color:'+ (_nw<0?'var(--debit)':'var(--credit)')+';')+
+    '</div></div>';
+
   const html =
     '<div class="topbar"><div><h1>總覽</h1><p>'+range.label+' 的收支統計</p></div>'+
       '<div class="topbar-actions"><div class="pill-toggle" id="periodTypeToggle">'+
@@ -680,6 +694,7 @@ function renderOverviewTab(){
       '<div class="card card-pad stamp-card"><div class="stamp"><small>結算</small><div class="num" style="font-size:15px;font-weight:700;">'+fmtMoney(cur.net)+'</div></div>'+
         '<div><div class="label" style="margin-bottom:4px;">淨額（收入－支出）</div><div style="font-size:13px;color:var(--text-soft);">'+(cur.net>=0?"本期收支為正，狀況良好。":"本期支出大於收入，請留意。")+'</div></div></div>'+
     '</div>'+
+    walletCardHtml+
     '<div class="two-col" style="margin-bottom:16px;">'+
       '<div class="card card-pad"><div class="section-title">收入分類佔比</div>'+barsHtml(cur.byCatIncome,"income",cur.incomeTotal)+'</div>'+
       '<div class="card card-pad"><div class="section-title">支出分類佔比</div>'+barsHtml(cur.byCatExpense,"expense",cur.expenseTotal)+'</div>'+
@@ -878,7 +893,7 @@ function renderWalletsTab(){
       '<div class="cat-card-head"><span class="nm">'+(WALLET_ICONS[w.type]||"📦")+' '+escapeHtml(w.name)+(w.active?"":'<span class="badge status-off" style="margin-left:6px;">已停用</span>')+'</span>'+
       (isMain()?'<div class="row-actions"><button class="btn ghost icon" data-action="edit-wallet" data-id="'+w.id+'">✎</button><button class="btn ghost icon" data-action="delete-wallet" data-id="'+w.id+'">🗑</button></div>':'')+
       '</div>'+
-      '<div style="font-size:22px;font-weight:700;font-family:\'IBM Plex Mono\',monospace;'+(bal<0?'color:var(--debit);':'color:var(--text);')+'">'+fmtMoney(bal)+'</div>'+
+      '<div style="display:flex;align-items:center;font-size:22px;font-weight:700;font-family:\'IBM Plex Mono\',monospace;white-space:nowrap;'+(bal<0?'color:var(--debit);':'color:var(--text);')+'">'+(bal<0?'<span>-</span><span>$'+Math.abs(Math.round(bal)).toLocaleString("zh-TW")+'</span>':'<span>$'+Math.round(bal).toLocaleString("zh-TW")+'</span>')+'</div>'+
       '<div style="font-size:11.5px;color:var(--text-faint);margin-top:4px;">'+(WALLET_TYPE_LABEL[w.type]||"其他")+'・起始餘額 '+fmtMoney(w.initialBalance)+'・'+usedCount+' 筆關聯明細</div>'+
     '</div>';
   }).join("");
