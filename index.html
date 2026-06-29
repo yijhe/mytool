@@ -154,6 +154,7 @@ tbody tr:last-child td{border-bottom:none;}
 .badge.expense{background:var(--debit-soft);color:var(--debit);}
 .badge.role-main{background:var(--gold-soft);color:var(--gold-deep);}
 .badge.role-sub{background:var(--paper-line);color:var(--text-soft);}
+.badge.transfer{background:var(--gold-soft);color:var(--gold-deep);}
 .badge.status-on{background:var(--credit-soft);color:var(--credit);}
 .badge.status-off{background:#EEE;color:var(--text-faint);}
 .cell-amount{text-align:right;font-weight:700;}
@@ -230,6 +231,7 @@ footer.app-foot{text-align:center;color:var(--text-faint);font-size:11.5px;margi
     <nav class="tabs" id="navTabs">
       <button class="tab-btn" data-tab="overview"><span class="dot"></span>總覽</button>
       <button class="tab-btn" data-tab="entries"><span class="dot"></span>記帳明細</button>
+      <button class="tab-btn" data-tab="wallets"><span class="dot"></span>錢包</button>
       <button class="tab-btn" data-tab="categories"><span class="dot"></span>分類管理</button>
       <button class="tab-btn" data-tab="members"><span class="dot"></span>成員管理</button>
       <button class="tab-btn" data-tab="backup"><span class="dot"></span>備份與帳本</button>
@@ -414,7 +416,7 @@ function renderNewLedgerForm(noneFoundMessage){
       const payload={
         name, ownerUid:fbUser.uid, ownerEmail:email,
         members:{ [email]: { name: fbUser.displayName || email, role:"main", active:true } },
-        memberEmails:[email], categories:defaultCategories(), createdAt:Date.now()
+        memberEmails:[email], categories:defaultCategories(), wallets:defaultWallets(), createdAt:Date.now()
       };
       const ref=await addDoc(collection(fbDb,"ledgers"), payload);
       localStorage.setItem(LAST_LEDGER_KEY, ref.id);
@@ -452,7 +454,7 @@ function renderLedgerPicker(ledgers){
       const email=normEmail(fbUser.email);
       const payload={ name, ownerUid:fbUser.uid, ownerEmail:email,
         members:{ [email]: { name: fbUser.displayName || email, role:"main", active:true } },
-        memberEmails:[email], categories:defaultCategories(), createdAt:Date.now() };
+        memberEmails:[email], categories:defaultCategories(), wallets:defaultWallets(), createdAt:Date.now() };
       const ref=await addDoc(collection(fbDb,"ledgers"), payload);
       localStorage.setItem(LAST_LEDGER_KEY, ref.id);
       openLedger(ref.id);
@@ -484,7 +486,9 @@ async function enterLedgerFlow(){
 let fbUser=null;
 let currentLedgerId=null, ledgerRaw=null;
 let unsubLedger=null, unsubEntries=null;
-let state={ meta:{ledgerName:"共同記帳"}, accounts:[], categories:{income:[],expense:[]}, entries:[] };
+let state={ meta:{ledgerName:"共同記帳"}, accounts:[], categories:{income:[],expense:[]}, wallets:[], entries:[] };
+
+function defaultWallets(){ return [{id:uid(), name:"現金", type:"cash", initialBalance:0, active:true}]; }
 
 function rebuildStateFromLedger(){
   const membersMap = ledgerRaw.members || {};
@@ -494,6 +498,7 @@ function rebuildStateFromLedger(){
     role: membersMap[email].role || "sub", active: membersMap[email].active!==false
   }));
   state.categories = ledgerRaw.categories || defaultCategories();
+  state.wallets = ledgerRaw.wallets || [];
 }
 function currentAccount(){ if(!fbUser) return null; return state.accounts.find(a=>a.id===normEmail(fbUser.email)) || null; }
 function isMain(){ const a=currentAccount(); return !!a && a.role==="main"; }
@@ -503,11 +508,12 @@ async function saveMembers(membersMap){
   await updateDoc(ledgerRef(), { members: membersMap, memberEmails });
 }
 async function saveCategories(){ await updateDoc(ledgerRef(), { categories: state.categories }); }
+async function saveWallets(){ await updateDoc(ledgerRef(), { wallets: state.wallets }); }
 
 function teardownLedger(){
   if(unsubLedger) unsubLedger(); if(unsubEntries) unsubEntries();
   unsubLedger=null; unsubEntries=null; currentLedgerId=null; ledgerRaw=null;
-  state={ meta:{ledgerName:"共同記帳"}, accounts:[], categories:{income:[],expense:[]}, entries:[] };
+  state={ meta:{ledgerName:"共同記帳"}, accounts:[], categories:{income:[],expense:[]}, wallets:[], entries:[] };
 }
 
 function openLedger(ledgerId){
@@ -559,7 +565,7 @@ function renderShell(){
 function switchTab(tab){ activeTab=tab; renderTab(); }
 function renderTab(){
   document.querySelectorAll(".tab-btn").forEach(btn=>btn.classList.toggle("active", btn.getAttribute("data-tab")===activeTab));
-  const map={overview:renderOverviewTab, entries:renderEntriesTab, categories:renderCategoriesTab, members:renderMembersTab, backup:renderBackupTab};
+  const map={overview:renderOverviewTab, entries:renderEntriesTab, wallets:renderWalletsTab, categories:renderCategoriesTab, members:renderMembersTab, backup:renderBackupTab};
   if(!currentAccount()) return;
   (map[activeTab]||renderOverviewTab)();
 }
@@ -574,7 +580,7 @@ function getPeriodRange(type,value){
 }
 function inRange(dateStr,start,end){ const s=fmtDateInput(start), e=fmtDateInput(end); return dateStr>=s && dateStr<=e; }
 function aggregate(start,end){
-  const entries=state.entries.filter(en=>inRange(en.date,start,end));
+  const entries=state.entries.filter(en=>inRange(en.date,start,end) && (en.type==="income"||en.type==="expense"));
   let incomeTotal=0, expenseTotal=0; const byCatIncome={}, byCatExpense={}, byMember={};
   entries.forEach(en=>{
     const amt=Number(en.amount)||0;
@@ -587,6 +593,24 @@ function aggregate(start,end){
 }
 function categoryName(type,catId){ const c=(state.categories[type]||[]).find(x=>x.id===catId); return c?c.name:"（未分類）"; }
 function subName(type,catId,subId){ const c=(state.categories[type]||[]).find(x=>x.id===catId); if(!c) return ""; const s=(c.subs||[]).find(x=>x.id===subId); return s?s.name:""; }
+const WALLET_ICONS={cash:"💵", bank:"🏦", credit:"💳", other:"📦"};
+function walletName(id){ const w=(state.wallets||[]).find(x=>x.id===id); return w?w.name:"（已刪除錢包）"; }
+function walletBalance(walletId){
+  const w=(state.wallets||[]).find(x=>x.id===walletId);
+  if(!w) return 0;
+  let bal=Number(w.initialBalance)||0;
+  state.entries.forEach(en=>{
+    const amt=Number(en.amount)||0;
+    if(en.type==="income" && en.walletId===walletId) bal+=amt;
+    else if(en.type==="expense" && en.walletId===walletId) bal-=amt;
+    else if(en.type==="transfer"){
+      if(en.fromWalletId===walletId) bal-=amt;
+      if(en.toWalletId===walletId) bal+=amt;
+    }
+  });
+  return bal;
+}
+function totalNetWorth(){ return (state.wallets||[]).filter(w=>w.active).reduce((sum,w)=>sum+walletBalance(w.id),0); }
 
 /* =========================================================
    總覽分頁
@@ -711,6 +735,7 @@ function filteredEntries(){
 function categoryOptionsHtml(type,selected){ return '<option value="">請選擇分類</option>'+(state.categories[type]||[]).map(c=>'<option value="'+c.id+'"'+(c.id===selected?" selected":"")+'>'+escapeHtml(c.name)+'</option>').join(""); }
 function subOptionsHtml(type,catId,selected){ const cat=(state.categories[type]||[]).find(c=>c.id===catId); const subs=cat?(cat.subs||[]):[]; if(subs.length===0) return '<option value="">（此分類沒有明細項目）</option>'; return '<option value="">不指定明細</option>'+subs.map(s=>'<option value="'+s.id+'"'+(s.id===selected?" selected":"")+'>'+escapeHtml(s.name)+'</option>').join(""); }
 function memberOptionsHtml(selected){ return state.accounts.filter(a=>a.active).map(a=>'<option value="'+a.id+'"'+(a.id===selected?" selected":"")+'>'+escapeHtml(a.name)+(a.role==="main"?"（主帳號）":"")+'</option>').join(""); }
+function walletOptionsHtml(selected, excludeId){ const list=(state.wallets||[]).filter(w=>w.active && w.id!==excludeId); if(list.length===0) return '<option value="">（尚未建立錢包）</option>'; return '<option value="">不指定錢包</option>'+list.map(w=>'<option value="'+w.id+'"'+(w.id===selected?" selected":"")+'>'+(WALLET_ICONS[w.type]||"📦")+' '+escapeHtml(w.name)+'</option>').join(""); }
 
 function renderEntriesTab(){
   const all=filteredEntries();
@@ -720,10 +745,18 @@ function renderEntriesTab(){
   const rowsHtml = pageItems.length===0
     ? '<tr><td colspan="7"><div class="empty-state"><div class="ico">📭</div><p>沒有符合條件的記帳明細'+(isMain()?'，點選右上方「新增明細」開始記錄第一筆帳。':'。')+'</p></div></td></tr>'
     : pageItems.map(en=>{
+        if(en.type==="transfer"){
+          return '<tr><td>'+fmtDateHuman(en.date)+'</td><td><span class="badge transfer">🔁 轉帳</span></td>'+
+            '<td>'+escapeHtml(walletName(en.fromWalletId))+' → '+escapeHtml(walletName(en.toWalletId))+'</td>'+
+            '<td style="color:var(--text-faint);">—</td>'+
+            '<td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="'+escapeHtml(en.note||"")+'">'+escapeHtml(en.note||"—")+'</td>'+
+            '<td class="cell-amount num" style="color:var(--gold-deep);">'+fmtMoney(en.amount)+'</td>'+
+            '<td>'+(isMain()?'<div class="row-actions"><button class="btn ghost icon" data-action="edit-entry" data-id="'+en.id+'">✎</button><button class="btn ghost icon" data-action="delete-entry" data-id="'+en.id+'">🗑</button></div>':'')+'</td></tr>';
+        }
         const cat=categoryName(en.type, en.categoryId); const sub=subName(en.type, en.categoryId, en.subId);
         const acc=state.accounts.find(a=>a.id===en.memberId);
         return '<tr><td>'+fmtDateHuman(en.date)+'</td><td><span class="badge '+en.type+'">'+(en.type==="income"?"收入":"支出")+'</span></td>'+
-          '<td>'+escapeHtml(cat)+(sub?' › '+escapeHtml(sub):'')+'</td>'+
+          '<td>'+escapeHtml(cat)+(sub?' › '+escapeHtml(sub):'')+(en.walletId?' <small style="color:var(--text-faint);">・'+escapeHtml(walletName(en.walletId))+'</small>':'')+'</td>'+
           '<td><span class="member-chip"><span class="avatar" style="background:'+avatarColor(en.memberId||"?")+'">'+escapeHtml((acc?acc.name:"?").charAt(0))+'</span>'+escapeHtml(acc?acc.name:"（已移除成員）")+'</span></td>'+
           '<td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="'+escapeHtml(en.note||"")+'">'+escapeHtml(en.note||"—")+'</td>'+
           '<td class="cell-amount '+en.type+' num">'+(en.type==="income"?"+":"−")+fmtMoney(en.amount)+'</td>'+
@@ -736,7 +769,7 @@ function renderEntriesTab(){
     '<div class="card card-pad" style="margin-bottom:16px;"><div class="filter-bar">'+
       '<div class="field"><label>起始日期</label><input type="date" id="f_start" value="'+entryFilter.start+'"></div>'+
       '<div class="field"><label>結束日期</label><input type="date" id="f_end" value="'+entryFilter.end+'"></div>'+
-      '<div class="field"><label>類型</label><select id="f_type"><option value="all"'+(entryFilter.type==="all"?" selected":"")+'>全部</option><option value="income"'+(entryFilter.type==="income"?" selected":"")+'>收入</option><option value="expense"'+(entryFilter.type==="expense"?" selected":"")+'>支出</option></select></div>'+
+      '<div class="field"><label>類型</label><select id="f_type"><option value="all"'+(entryFilter.type==="all"?" selected":"")+'>全部</option><option value="income"'+(entryFilter.type==="income"?" selected":"")+'>收入</option><option value="expense"'+(entryFilter.type==="expense"?" selected":"")+'>支出</option><option value="transfer"'+(entryFilter.type==="transfer"?" selected":"")+'>轉帳</option></select></div>'+
       '<div class="field"><label>成員</label><select id="f_member"><option value="">全部成員</option>'+memberOptionsHtml(entryFilter.memberId)+'</select></div>'+
       '<div class="field grow"><label>備註關鍵字</label><input type="text" id="f_keyword" placeholder="搜尋備註內容" value="'+escapeHtml(entryFilter.keyword)+'"></div>'+
       '<button class="btn ghost small" data-action="clear-filter">清除篩選</button></div></div>'+
@@ -761,39 +794,61 @@ function openEntryForm(entry){
   if(!isMain()){ toast("僅主帳號可以新增或編輯記帳明細","error"); return; }
   const isEdit=!!entry; const type=(entry&&entry.type)||"expense";
   openModal('<button class="modal-close" data-action="modal-close">✕</button>'+
-    '<h3>'+(isEdit?"編輯明細":"新增明細")+'</h3><p class="modal-sub">'+(isEdit?"修改這一筆記帳內容":"記錄一筆新的收入或支出")+'</p>'+
+    '<h3>'+(isEdit?"編輯明細":"新增明細")+'</h3><p class="modal-sub">'+(isEdit?"修改這一筆記帳內容":"記錄一筆收入、支出或轉帳")+'</p>'+
     '<form id="entryForm">'+
       '<div class="field"><label>類型</label><div class="pill-toggle" id="ef_type" style="width:100%;">'+
         '<button type="button" data-v="income" class="'+(type==="income"?"active":"")+'" style="flex:1;">收入</button>'+
-        '<button type="button" data-v="expense" class="'+(type==="expense"?"active":"")+'" style="flex:1;">支出</button></div></div>'+
+        '<button type="button" data-v="expense" class="'+(type==="expense"?"active":"")+'" style="flex:1;">支出</button>'+
+        '<button type="button" data-v="transfer" class="'+(type==="transfer"?"active":"")+'" style="flex:1;">轉帳</button></div></div>'+
       '<div class="field-row"><div class="field"><label for="ef_date">日期</label><input type="date" id="ef_date" value="'+(entry?entry.date:todayStr())+'" required></div>'+
       '<div class="field"><label for="ef_amount">金額</label><input type="number" id="ef_amount" min="1" step="1" value="'+(entry?entry.amount:"")+'" placeholder="0" required></div></div>'+
-      '<div class="field-row"><div class="field"><label for="ef_cat">分類</label><select id="ef_cat">'+categoryOptionsHtml(type, entry?entry.categoryId:"")+'</select></div>'+
-      '<div class="field"><label for="ef_sub">明細項目</label><select id="ef_sub">'+subOptionsHtml(type, entry?entry.categoryId:"", entry?entry.subId:"")+'</select></div></div>'+
-      '<div class="field"><label for="ef_member">所屬成員</label><select id="ef_member">'+memberOptionsHtml(entry?entry.memberId:currentAccount().id)+'</select></div>'+
+      '<div id="ef_io_fields">'+
+        '<div class="field-row"><div class="field"><label for="ef_cat">分類</label><select id="ef_cat">'+categoryOptionsHtml(type==="transfer"?"expense":type, entry?entry.categoryId:"")+'</select></div>'+
+        '<div class="field"><label for="ef_sub">明細項目</label><select id="ef_sub">'+subOptionsHtml(type==="transfer"?"expense":type, entry?entry.categoryId:"", entry?entry.subId:"")+'</select></div></div>'+
+        '<div class="field-row"><div class="field"><label for="ef_member">所屬成員</label><select id="ef_member">'+memberOptionsHtml(entry?entry.memberId:currentAccount().id)+'</select></div>'+
+        '<div class="field"><label for="ef_wallet">錢包</label><select id="ef_wallet">'+walletOptionsHtml(entry?entry.walletId:"")+'</select></div></div>'+
+      '</div>'+
+      '<div id="ef_transfer_fields" class="hidden">'+
+        '<div class="field-row"><div class="field"><label for="ef_from">從</label><select id="ef_from">'+walletOptionsHtml(entry?entry.fromWalletId:"")+'</select></div>'+
+        '<div class="field"><label for="ef_to">到</label><select id="ef_to">'+walletOptionsHtml(entry?entry.toWalletId:"")+'</select></div></div>'+
+      '</div>'+
       '<div class="field"><label for="ef_note">備註（選填）</label><input type="text" id="ef_note" maxlength="60" value="'+escapeHtml(entry?entry.note||"":"")+'" placeholder="例如：超市採買"></div>'+
       '<div class="modal-actions"><button type="button" class="btn ghost" data-action="modal-close">取消</button><button type="submit" class="btn gold">'+(isEdit?"儲存修改":"新增明細")+'</button></div>'+
     '</form>');
   let curType=type;
+  function applyTypeUI(){
+    document.getElementById("ef_io_fields").classList.toggle("hidden", curType==="transfer");
+    document.getElementById("ef_transfer_fields").classList.toggle("hidden", curType!=="transfer");
+  }
+  applyTypeUI();
   document.querySelectorAll("#ef_type button").forEach(btn=>{
     btn.addEventListener("click", ()=>{ curType=btn.getAttribute("data-v");
       document.querySelectorAll("#ef_type button").forEach(b=>b.classList.toggle("active", b===btn));
-      document.getElementById("ef_cat").innerHTML=categoryOptionsHtml(curType,""); document.getElementById("ef_sub").innerHTML=subOptionsHtml(curType,"","");
+      if(curType!=="transfer"){ document.getElementById("ef_cat").innerHTML=categoryOptionsHtml(curType,""); document.getElementById("ef_sub").innerHTML=subOptionsHtml(curType,"",""); }
+      applyTypeUI();
     });
   });
-  document.getElementById("ef_cat").addEventListener("change", ()=>{ document.getElementById("ef_sub").innerHTML=subOptionsHtml(curType, document.getElementById("ef_cat").value, ""); });
+  document.getElementById("ef_cat").addEventListener("change", ()=>{ document.getElementById("ef_sub").innerHTML=subOptionsHtml(curType==="transfer"?"expense":curType, document.getElementById("ef_cat").value, ""); });
   document.getElementById("entryForm").addEventListener("submit", async e=>{
     e.preventDefault();
     if(!isMain()){ toast("權限不足：僅主帳號可修改記帳明細","error"); closeModal(); return; }
     const amount=Number(document.getElementById("ef_amount").value);
-    const catId=document.getElementById("ef_cat").value;
     const date=document.getElementById("ef_date").value;
-    const memberId=document.getElementById("ef_member").value;
     if(!date){ toast("請選擇日期","error"); return; }
     if(!amount||amount<=0){ toast("金額必須大於 0","error"); return; }
-    if(!catId){ toast("請選擇分類","error"); return; }
-    if(!memberId){ toast("請選擇所屬成員","error"); return; }
-    const payload={ type:curType, date, amount, categoryId:catId, subId:document.getElementById("ef_sub").value||null, memberId, note:document.getElementById("ef_note").value.trim() };
+    let payload;
+    if(curType==="transfer"){
+      const fromId=document.getElementById("ef_from").value, toId=document.getElementById("ef_to").value;
+      if(!fromId||!toId){ toast("請選擇轉出與轉入的錢包","error"); return; }
+      if(fromId===toId){ toast("轉出與轉入的錢包不能相同","error"); return; }
+      payload={ type:"transfer", date, amount, fromWalletId:fromId, toWalletId:toId, note:document.getElementById("ef_note").value.trim() };
+    } else {
+      const catId=document.getElementById("ef_cat").value;
+      const memberId=document.getElementById("ef_member").value;
+      if(!catId){ toast("請選擇分類","error"); return; }
+      if(!memberId){ toast("請選擇所屬成員","error"); return; }
+      payload={ type:curType, date, amount, categoryId:catId, subId:document.getElementById("ef_sub").value||null, memberId, walletId:document.getElementById("ef_wallet").value||null, note:document.getElementById("ef_note").value.trim() };
+    }
     try{
       if(isEdit){ await updateDoc(doc(fbDb,"ledgers",currentLedgerId,"entries",entry.id), {...payload, updatedAt:Date.now()}); toast("已儲存修改","success"); }
       else { await addDoc(collection(fbDb,"ledgers",currentLedgerId,"entries"), {...payload, createdAt:Date.now()}); toast("已新增一筆明細","success"); }
@@ -806,6 +861,70 @@ function deleteEntry(id){
   showConfirm("確定要刪除這筆明細嗎？此操作無法復原。", async ()=>{
     try{ await deleteDoc(doc(fbDb,"ledgers",currentLedgerId,"entries",id)); toast("已刪除這筆明細","success"); }
     catch(err){ toast("刪除失敗："+explainError(err),"error"); }
+  }, {danger:true, confirmLabel:"刪除"});
+}
+
+/* =========================================================
+   錢包分頁
+========================================================= */
+const WALLET_TYPE_LABEL={cash:"現金", bank:"銀行帳戶", credit:"信用卡", other:"其他"};
+function renderWalletsTab(){
+  const wallets=state.wallets||[];
+  const total=totalNetWorth();
+  const cards=wallets.map(w=>{
+    const bal=walletBalance(w.id);
+    const usedCount=state.entries.filter(en=>en.walletId===w.id||en.fromWalletId===w.id||en.toWalletId===w.id).length;
+    return '<div class="cat-card">'+
+      '<div class="cat-card-head"><span class="nm">'+(WALLET_ICONS[w.type]||"📦")+' '+escapeHtml(w.name)+(w.active?"":'<span class="badge status-off" style="margin-left:6px;">已停用</span>')+'</span>'+
+      (isMain()?'<div class="row-actions"><button class="btn ghost icon" data-action="edit-wallet" data-id="'+w.id+'">✎</button><button class="btn ghost icon" data-action="delete-wallet" data-id="'+w.id+'">🗑</button></div>':'')+
+      '</div>'+
+      '<div style="font-size:22px;font-weight:700;font-family:\'IBM Plex Mono\',monospace;'+(bal<0?'color:var(--debit);':'color:var(--text);')+'">'+fmtMoney(bal)+'</div>'+
+      '<div style="font-size:11.5px;color:var(--text-faint);margin-top:4px;">'+(WALLET_TYPE_LABEL[w.type]||"其他")+'・起始餘額 '+fmtMoney(w.initialBalance)+'・'+usedCount+' 筆關聯明細</div>'+
+    '</div>';
+  }).join("");
+  document.getElementById("tabContent").innerHTML =
+    '<div class="topbar"><div><h1>錢包</h1><p>追蹤現金、銀行帳戶與信用卡的即時餘額</p></div>'+
+      '<div class="topbar-actions">'+(isMain()?'<button class="btn gold" data-action="add-wallet">＋ 新增錢包</button>':'')+'</div></div>'+
+    (isMain()?"":'<div class="read-only-banner">👁 您目前為子帳號，僅能檢視錢包餘額，無法新增或修改。</div>')+
+    '<div class="card card-pad stamp-card" style="margin-bottom:18px;"><div class="stamp"><small>總資產</small><div class="num" style="font-size:14px;font-weight:700;">'+fmtMoney(total)+'</div></div>'+
+      '<div><div class="label" style="margin-bottom:4px;">所有啟用中錢包加總</div><div style="font-size:13px;color:var(--text-soft);">轉帳交易不會影響收支統計，只會反映在錢包餘額上。</div></div></div>'+
+    (cards||'<div class="empty-state"><div class="ico">👛</div><p>尚未建立任何錢包'+(isMain()?'，點選右上方「新增錢包」開始追蹤餘額。':'。')+'</p></div>');
+}
+function openWalletForm(wallet){
+  if(!isMain()) return;
+  const isEdit=!!wallet;
+  openModal('<button class="modal-close" data-action="modal-close">✕</button>'+
+    '<h3>'+(isEdit?"編輯錢包":"新增錢包")+'</h3><p class="modal-sub">'+(isEdit?"修改錢包名稱、類型或起始餘額":"建立一個現金、銀行帳戶或信用卡")+'</p>'+
+    '<form id="walletForm">'+
+      '<div class="field"><label for="wf_name">名稱</label><input id="wf_name" maxlength="20" value="'+(wallet?escapeHtml(wallet.name):"")+'" placeholder="例如：國泰銀行" required></div>'+
+      '<div class="field"><label for="wf_type">類型</label><select id="wf_type">'+
+        Object.keys(WALLET_TYPE_LABEL).map(k=>'<option value="'+k+'"'+(wallet&&wallet.type===k?" selected":"")+'>'+WALLET_ICONS[k]+' '+WALLET_TYPE_LABEL[k]+'</option>').join("")+
+      '</select></div>'+
+      '<div class="field"><label for="wf_balance">起始餘額</label><input type="number" id="wf_balance" step="1" value="'+(wallet?wallet.initialBalance:0)+'" placeholder="0"></div>'+
+      '<p class="field-hint" style="margin-top:-6px;margin-bottom:14px;">信用卡若目前有欠款，可以填負數，例如 -3000。</p>'+
+      '<div class="modal-actions"><button type="button" class="btn ghost" data-action="modal-close">取消</button><button type="submit" class="btn gold">'+(isEdit?"儲存修改":"新增錢包")+'</button></div>'+
+    '</form>');
+  document.getElementById("walletForm").addEventListener("submit", async e=>{
+    e.preventDefault();
+    const name=document.getElementById("wf_name").value.trim();
+    const type=document.getElementById("wf_type").value;
+    const initialBalance=Number(document.getElementById("wf_balance").value)||0;
+    if(!name){ toast("請輸入錢包名稱","error"); return; }
+    if(isEdit){ const w=state.wallets.find(x=>x.id===wallet.id); if(w){ w.name=name; w.type=type; w.initialBalance=initialBalance; } }
+    else { state.wallets.push({id:uid(), name, type, initialBalance, active:true}); }
+    try{ await saveWallets(); toast(isEdit?"已儲存修改":"已新增錢包「"+name+"」","success"); closeModal(); }
+    catch(err){ toast("操作失敗："+explainError(err),"error"); }
+  });
+}
+function deleteWallet(id){
+  if(!isMain()) return;
+  const used=state.entries.filter(en=>en.walletId===id||en.fromWalletId===id||en.toWalletId===id).length;
+  if(used>0){ toast("此錢包目前有 "+used+" 筆明細關聯，請先修改或刪除相關明細後再刪除錢包","error"); return; }
+  const w=state.wallets.find(x=>x.id===id); if(!w) return;
+  showConfirm("確定要刪除「"+w.name+"」這個錢包嗎？此操作無法復原。", async ()=>{
+    state.wallets=state.wallets.filter(x=>x.id!==id);
+    try{ await saveWallets(); toast("已刪除錢包","success"); }
+    catch(err){ toast("操作失敗："+explainError(err),"error"); }
   }, {danger:true, confirmLabel:"刪除"});
 }
 
@@ -934,7 +1053,7 @@ function renderBackupTab(){
       (isMain()?'<div class="backup-row"><div class="info"><strong>刪除這個帳本</strong><span>永久刪除這個帳本與所有記帳明細，所有成員都會失去存取權</span></div><button class="btn danger" data-action="delete-ledger">刪除帳本</button></div>':'')+
     '</div>';
   document.querySelector("[data-action='export-backup']").addEventListener("click", ()=>{
-    const payload={ ledger:{name:ledgerRaw.name, members:ledgerRaw.members, categories:ledgerRaw.categories}, entries:state.entries, exportedAt:new Date().toISOString() };
+    const payload={ ledger:{name:ledgerRaw.name, members:ledgerRaw.members, categories:ledgerRaw.categories, wallets:ledgerRaw.wallets}, entries:state.entries, exportedAt:new Date().toISOString() };
     const blob=new Blob([JSON.stringify(payload,null,2)],{type:"application/json"});
     const url=URL.createObjectURL(blob); const a=document.createElement("a"); const d=new Date();
     a.href=url; a.download="共同記帳備份_"+d.getFullYear()+pad(d.getMonth()+1)+pad(d.getDate())+".json";
@@ -972,6 +1091,9 @@ document.addEventListener("click", function(e){
     case "del-cat": deleteCategory(t.getAttribute("data-type"), t.getAttribute("data-cat")); break;
     case "add-sub": { const type=t.getAttribute("data-type"), catId=t.getAttribute("data-cat"); const input=document.querySelector('[data-cat-input="'+catId+'"]'); if(input) addSub(type,catId,input); break; }
     case "del-sub": deleteSub(t.getAttribute("data-type"), t.getAttribute("data-cat"), t.getAttribute("data-sub")); break;
+    case "add-wallet": openWalletForm(null); break;
+    case "edit-wallet": { const w=(state.wallets||[]).find(x=>x.id===id); if(w) openWalletForm(w); break; }
+    case "delete-wallet": deleteWallet(id); break;
     case "toggle-active": toggleActive(id); break;
     case "remove-member": removeMember(id); break;
   }
