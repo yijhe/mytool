@@ -499,7 +499,7 @@ function currentAccount(){ if(!fbUser) return null; return state.accounts.find(a
 function isMain(){ const a=currentAccount(); return !!a && a.role==="main"; }
 function ledgerRef(){ return doc(fbDb,"ledgers",currentLedgerId); }
 async function saveMembers(membersMap){
-  const memberEmails = Object.keys(membersMap);
+  const memberEmails = Object.keys(membersMap).filter(e=>membersMap[e].active!==false);
   await updateDoc(ledgerRef(), { members: membersMap, memberEmails });
 }
 async function saveCategories(){ await updateDoc(ledgerRef(), { categories: state.categories }); }
