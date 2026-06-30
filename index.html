@@ -218,7 +218,6 @@ footer.app-foot{text-align:center;color:var(--text-faint);font-size:11.5px;margi
 </head>
 <body>
 
-<div id="configScreen" class="auth-screen hidden"><div class="auth-card" id="configCard"></div></div>
 <div id="authScreen" class="auth-screen hidden"><div class="auth-card" id="authCard"></div></div>
 <div id="pickScreen" class="auth-screen hidden"><div class="auth-card" id="pickCard"></div></div>
 
@@ -261,7 +260,6 @@ import {
 /* =========================================================
    常數與工具
 ========================================================= */
-const FB_CONFIG_KEY = "coLedger_fbConfig_v1";
 const LAST_LEDGER_KEY = "coLedger_lastLedger_v1";
 const AVATAR_COLORS = ["#2F6B4F","#B8924A","#A23B33","#3E6FA0","#7A5DA8","#B06A2E","#4F8C7A"];
 
@@ -326,35 +324,8 @@ function explainError(err){
 ========================================================= */
 let fbApp=null, fbAuth=null, fbDb=null, googleProvider=null;
 
-function renderConfigScreen(){
-  hideAllScreens();
-  document.getElementById("configScreen").classList.remove("hidden");
-  document.getElementById("configCard").innerHTML =
-    '<div class="auth-brand"><div class="auth-mark">帳</div><h1>連接 Firebase</h1></div>'+
-    '<p class="auth-sub">請到 Firebase 主控台建立一個專案，並在「Web應用程式」設定頁面複製整段設定內容，貼到下面欄位。這不是密碼，安全性由 Firestore 規則控管。</p>'+
-    '<form id="configForm">'+
-      '<div class="field"><label for="cf_config">firebaseConfig</label>'+
-      '<textarea id="cf_config" placeholder=\'{ "apiKey": "...", "authDomain": "...", "projectId": "...", "appId": "..." }\' required></textarea></div>'+
-      '<button type="submit" class="btn gold block">儲存並繼續</button>'+
-    '</form>'+
-    '<p class="field-hint">提示：在 Firebase 主控台 → 專案設定 → 一般 → 你的應用程式，找到 SDK 設定，整段複製貼上即可，前後多餘的文字沒關係，系統會自動擷取。</p>';
-  document.getElementById("configForm").addEventListener("submit", e=>{
-    e.preventDefault();
-    const raw=document.getElementById("cf_config").value;
-    const match=raw.match(/\{[\s\S]*\}/);
-    if(!match){ toast("看起來不是有效的設定內容","error"); return; }
-    let cfg;
-    try{ cfg=Function('"use strict";return ('+match[0]+')')(); }
-    catch(err){ toast("設定內容格式有誤，請重新複製貼上","error"); return; }
-    if(!cfg || !cfg.apiKey || !cfg.projectId || !cfg.appId){ toast("設定內容缺少必要欄位（apiKey / projectId / appId）","error"); return; }
-    localStorage.setItem(FB_CONFIG_KEY, JSON.stringify(cfg));
-    toast("設定已儲存，正在重新載入…","success");
-    setTimeout(()=>location.reload(), 500);
-  });
-}
-
 function hideAllScreens(){
-  ["configScreen","authScreen","pickScreen","appScreen"].forEach(id=>document.getElementById(id).classList.add("hidden"));
+  ["authScreen","pickScreen","appScreen"].forEach(id=>document.getElementById(id).classList.add("hidden"));
 }
 
 /* =========================================================
@@ -366,17 +337,11 @@ function renderAuthScreen(){
   document.getElementById("authCard").innerHTML =
     '<div class="auth-brand"><div class="auth-mark">帳</div><h1>共同記帳</h1></div>'+
     '<p class="auth-sub">使用 Google 帳號登入，即可開始與家人或夥伴共用雲端帳本。</p>'+
-    '<button class="btn block google-btn" id="googleSignInBtn"><span class="g-logo">G</span> 使用 Google 帳號登入</button>'+
-    '<p class="auth-switch"><a id="resetConfigLink">重新設定 Firebase 連線</a></p>';
+    '<button class="btn block google-btn" id="googleSignInBtn"><span class="g-logo">G</span> 使用 Google 帳號登入</button>';
   document.getElementById("googleSignInBtn").addEventListener("click", async function(){
     this.disabled=true; this.innerHTML='<span class="spinner"></span> 登入中…';
     try{ await signInWithPopup(fbAuth, googleProvider); }
     catch(err){ toast("登入失敗："+explainError(err),"error"); this.disabled=false; this.innerHTML='<span class="g-logo">G</span> 使用 Google 帳號登入'; }
-  });
-  document.getElementById("resetConfigLink").addEventListener("click", ()=>{
-    showConfirm("這會清除目前儲存的 Firebase 設定，需要重新貼上才能繼續使用。確定要繼續嗎？", ()=>{
-      localStorage.removeItem(FB_CONFIG_KEY); location.reload();
-    });
   });
 }
 
@@ -1118,14 +1083,19 @@ document.getElementById("navTabs").addEventListener("click", e=>{ const btn=e.ta
 /* =========================================================
    啟動
 ========================================================= */
+const FIREBASE_CONFIG = {
+  apiKey: "AIzaSyAdmMSnfR6DG_6e87Q0lI0ZrEAMJk_-4QY",
+  authDomain: "my-tool-project-b5b79.firebaseapp.com",
+  projectId: "my-tool-project-b5b79",
+  storageBucket: "my-tool-project-b5b79.firebasestorage.app",
+  messagingSenderId: "1044480732119",
+  appId: "1:1044480732119:web:2261df47b0c4670b623992",
+  measurementId: "G-M7F56C3P66"
+};
 function boot(){
-  const cfgRaw=localStorage.getItem(FB_CONFIG_KEY);
-  if(!cfgRaw){ renderConfigScreen(); return; }
-  let cfg;
-  try{ cfg=JSON.parse(cfgRaw); }catch(e){ localStorage.removeItem(FB_CONFIG_KEY); renderConfigScreen(); return; }
   try{
-    fbApp=initializeApp(cfg); fbAuth=getAuth(fbApp); fbDb=getFirestore(fbApp); googleProvider=new GoogleAuthProvider();
-  }catch(err){ toast("Firebase 初始化失敗："+explainError(err),"error"); localStorage.removeItem(FB_CONFIG_KEY); renderConfigScreen(); return; }
+    fbApp=initializeApp(FIREBASE_CONFIG); fbAuth=getAuth(fbApp); fbDb=getFirestore(fbApp); googleProvider=new GoogleAuthProvider();
+  }catch(err){ toast("Firebase 初始化失敗："+explainError(err),"error"); return; }
 
   onAuthStateChanged(fbAuth, user=>{
     fbUser=user;
