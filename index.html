@@ -467,6 +467,7 @@ function rebuildStateFromLedger(){
 }
 function currentAccount(){ if(!fbUser) return null; return state.accounts.find(a=>a.id===normEmail(fbUser.email)) || null; }
 function isMain(){ const a=currentAccount(); return !!a && a.role==="main"; }
+function canEditEntry(en){ const a=currentAccount(); if(!a) return false; if(a.role==="main") return true; return en && en.createdBy===a.id; }
 function ledgerRef(){ return doc(fbDb,"ledgers",currentLedgerId); }
 async function saveMembers(membersMap){
   const memberEmails = Object.keys(membersMap).filter(e=>membersMap[e].active!==false);
@@ -651,7 +652,6 @@ function renderOverviewTab(){
         '<button data-ptype="day" class="'+(overviewState.type==="day"?"active":"")+'">日</button>'+
         '<button data-ptype="week" class="'+(overviewState.type==="week"?"active":"")+'">週</button>'+
         '<button data-ptype="month" class="'+(overviewState.type==="month"?"active":"")+'">月</button></div></div></div>'+
-    (isMain()?"":'<div class="read-only-banner">👁 您目前為子帳號，僅能檢視帳本內容，記帳明細的新增與修改僅限主帳號操作。</div>')+
     '<div class="period-bar"><div class="period-nav"><button data-action="ov-prev">‹</button><div class="period-label">'+periodInputHtml()+'</div><button data-action="ov-next">›</button></div></div>'+
     '<div class="stat-grid">'+
       '<div class="stat-card income"><div class="label">💰 收入合計</div><div class="value num">'+fmtMoney(cur.incomeTotal)+'</div>'+deltaHtml(cur.incomeTotal,prev.incomeTotal)+'</div>'+
@@ -723,29 +723,31 @@ function renderEntriesTab(){
   entryFilter.page=Math.min(entryFilter.page, totalPages);
   const pageItems=all.slice((entryFilter.page-1)*PAGE_SIZE, entryFilter.page*PAGE_SIZE);
   const rowsHtml = pageItems.length===0
-    ? '<tr><td colspan="7"><div class="empty-state"><div class="ico">📭</div><p>沒有符合條件的記帳明細'+(isMain()?'，點選右上方「新增明細」開始記錄第一筆帳。':'。')+'</p></div></td></tr>'
+    ? '<tr><td colspan="7"><div class="empty-state"><div class="ico">📭</div><p>沒有符合條件的記帳明細，點選右上方「新增明細」開始記錄第一筆帳。</p></div></td></tr>'
     : pageItems.map(en=>{
+        const mine=canEditEntry(en);
+        const creatorAcc=state.accounts.find(a=>a.id===en.createdBy);
+        const creatorTag = creatorAcc ? '<small style="color:var(--text-faint);display:block;margin-top:2px;">由 '+escapeHtml(creatorAcc.name)+' 新增</small>' : '';
         if(en.type==="transfer"){
           return '<tr><td>'+fmtDateHuman(en.date)+'</td><td><span class="badge transfer">🔁 轉帳</span></td>'+
-            '<td>'+escapeHtml(walletName(en.fromWalletId))+' → '+escapeHtml(walletName(en.toWalletId))+'</td>'+
+            '<td>'+escapeHtml(walletName(en.fromWalletId))+' → '+escapeHtml(walletName(en.toWalletId))+creatorTag+'</td>'+
             '<td style="color:var(--text-faint);">—</td>'+
             '<td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="'+escapeHtml(en.note||"")+'">'+escapeHtml(en.note||"—")+'</td>'+
             '<td class="cell-amount num" style="color:var(--gold-deep);">'+fmtMoney(en.amount)+'</td>'+
-            '<td>'+(isMain()?'<div class="row-actions"><button class="btn ghost icon" data-action="edit-entry" data-id="'+en.id+'">✎</button><button class="btn ghost icon" data-action="delete-entry" data-id="'+en.id+'">🗑</button></div>':'')+'</td></tr>';
+            '<td>'+(mine?'<div class="row-actions"><button class="btn ghost icon" data-action="edit-entry" data-id="'+en.id+'">✎</button><button class="btn ghost icon" data-action="delete-entry" data-id="'+en.id+'">🗑</button></div>':'')+'</td></tr>';
         }
         const cat=categoryName(en.type, en.categoryId); const sub=subName(en.type, en.categoryId, en.subId);
         const acc=state.accounts.find(a=>a.id===en.memberId);
         return '<tr><td>'+fmtDateHuman(en.date)+'</td><td><span class="badge '+en.type+'">'+(en.type==="income"?"收入":"支出")+'</span></td>'+
-          '<td>'+escapeHtml(cat)+(sub?' › '+escapeHtml(sub):'')+(en.walletId?' <small style="color:var(--text-faint);">・'+escapeHtml(walletName(en.walletId))+'</small>':'')+'</td>'+
+          '<td>'+escapeHtml(cat)+(sub?' › '+escapeHtml(sub):'')+(en.walletId?' <small style="color:var(--text-faint);">・'+escapeHtml(walletName(en.walletId))+'</small>':'')+creatorTag+'</td>'+
           '<td><span class="member-chip"><span class="avatar" style="background:'+avatarColor(en.memberId||"?")+'">'+escapeHtml((acc?acc.name:"?").charAt(0))+'</span>'+escapeHtml(acc?acc.name:"（已移除成員）")+'</span></td>'+
           '<td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="'+escapeHtml(en.note||"")+'">'+escapeHtml(en.note||"—")+'</td>'+
           '<td class="cell-amount '+en.type+' num">'+(en.type==="income"?"+":"−")+fmtMoney(en.amount)+'</td>'+
-          '<td>'+(isMain()?'<div class="row-actions"><button class="btn ghost icon" data-action="edit-entry" data-id="'+en.id+'">✎</button><button class="btn ghost icon" data-action="delete-entry" data-id="'+en.id+'">🗑</button></div>':'')+'</td></tr>';
+          '<td>'+(mine?'<div class="row-actions"><button class="btn ghost icon" data-action="edit-entry" data-id="'+en.id+'">✎</button><button class="btn ghost icon" data-action="delete-entry" data-id="'+en.id+'">🗑</button></div>':'')+'</td></tr>';
       }).join("");
   document.getElementById("tabContent").innerHTML =
     '<div class="topbar"><div><h1>記帳明細</h1><p>共 '+all.length+' 筆紀錄</p></div>'+
-      '<div class="topbar-actions">'+(isMain()?'<button class="btn gold" data-action="add-entry">＋ 新增明細</button>':'')+'</div></div>'+
-    (isMain()?"":'<div class="read-only-banner">👁 您目前為子帳號，僅能檢視明細，無法新增、編輯或刪除。</div>')+
+      '<div class="topbar-actions"><button class="btn gold" data-action="add-entry">＋ 新增明細</button></div></div>'+
     '<div class="card card-pad" style="margin-bottom:16px;"><div class="filter-bar">'+
       '<div class="field"><label>起始日期</label><input type="date" id="f_start" value="'+entryFilter.start+'"></div>'+
       '<div class="field"><label>結束日期</label><input type="date" id="f_end" value="'+entryFilter.end+'"></div>'+
@@ -771,7 +773,7 @@ function bindEntriesFilterEvents(){
 }
 
 function openEntryForm(entry){
-  if(!isMain()){ toast("僅主帳號可以新增或編輯記帳明細","error"); return; }
+  if(entry && !canEditEntry(entry)){ toast("只能編輯自己新增的明細，或請主帳號協助處理","error"); return; }
   const isEdit=!!entry; const type=(entry&&entry.type)||"expense";
   openModal('<button class="modal-close" data-action="modal-close">✕</button>'+
     '<h3>'+(isEdit?"編輯明細":"新增明細")+'</h3><p class="modal-sub">'+(isEdit?"修改這一筆記帳內容":"記錄一筆收入、支出或轉帳")+'</p>'+
@@ -811,7 +813,7 @@ function openEntryForm(entry){
   document.getElementById("ef_cat").addEventListener("change", ()=>{ document.getElementById("ef_sub").innerHTML=subOptionsHtml(curType==="transfer"?"expense":curType, document.getElementById("ef_cat").value, ""); });
   document.getElementById("entryForm").addEventListener("submit", async e=>{
     e.preventDefault();
-    if(!isMain()){ toast("權限不足：僅主帳號可修改記帳明細","error"); closeModal(); return; }
+    if(isEdit && !canEditEntry(entry)){ toast("只能編輯自己新增的明細，或請主帳號協助處理","error"); closeModal(); return; }
     const amount=Number(document.getElementById("ef_amount").value);
     const date=document.getElementById("ef_date").value;
     if(!date){ toast("請選擇日期","error"); return; }
@@ -831,13 +833,14 @@ function openEntryForm(entry){
     }
     try{
       if(isEdit){ await updateDoc(doc(fbDb,"ledgers",currentLedgerId,"entries",entry.id), {...payload, updatedAt:Date.now()}); toast("已儲存修改","success"); }
-      else { await addDoc(collection(fbDb,"ledgers",currentLedgerId,"entries"), {...payload, createdAt:Date.now()}); toast("已新增一筆明細","success"); }
+      else { await addDoc(collection(fbDb,"ledgers",currentLedgerId,"entries"), {...payload, createdBy:currentAccount().id, createdAt:Date.now()}); toast("已新增一筆明細","success"); }
       closeModal();
     }catch(err){ toast("操作失敗："+explainError(err),"error"); }
   });
 }
 function deleteEntry(id){
-  if(!isMain()){ toast("權限不足：僅主帳號可刪除記帳明細","error"); return; }
+  const en=state.entries.find(x=>x.id===id);
+  if(!canEditEntry(en)){ toast("只能刪除自己新增的明細，或請主帳號協助處理","error"); return; }
   showConfirm("確定要刪除這筆明細嗎？此操作無法復原。", async ()=>{
     try{ await deleteDoc(doc(fbDb,"ledgers",currentLedgerId,"entries",id)); toast("已刪除這筆明細","success"); }
     catch(err){ toast("刪除失敗："+explainError(err),"error"); }
@@ -856,7 +859,7 @@ function renderWalletsTab(){
     const usedCount=state.entries.filter(en=>en.walletId===w.id||en.fromWalletId===w.id||en.toWalletId===w.id).length;
     return '<div class="cat-card">'+
       '<div class="cat-card-head"><span class="nm">'+(WALLET_ICONS[w.type]||"📦")+' '+escapeHtml(w.name)+(w.active?"":'<span class="badge status-off" style="margin-left:6px;">已停用</span>')+'</span>'+
-      (isMain()?'<div class="row-actions"><button class="btn ghost icon" data-action="edit-wallet" data-id="'+w.id+'">✎</button><button class="btn ghost icon" data-action="delete-wallet" data-id="'+w.id+'">🗑</button></div>':'')+
+      '<div class="row-actions"><button class="btn ghost icon" data-action="edit-wallet" data-id="'+w.id+'">✎</button><button class="btn ghost icon" data-action="delete-wallet" data-id="'+w.id+'">🗑</button></div>'+
       '</div>'+
       '<div style="display:flex;align-items:center;font-size:22px;font-weight:700;font-family:\'IBM Plex Mono\',monospace;white-space:nowrap;'+(bal<0?'color:var(--debit);':'color:var(--text);')+'">'+(bal<0?'<span>-</span><span>$'+Math.abs(Math.round(bal)).toLocaleString("zh-TW")+'</span>':'<span>$'+Math.round(bal).toLocaleString("zh-TW")+'</span>')+'</div>'+
       '<div style="font-size:11.5px;color:var(--text-faint);margin-top:4px;">'+(WALLET_TYPE_LABEL[w.type]||"其他")+'・起始餘額 '+fmtMoney(w.initialBalance)+'・'+usedCount+' 筆關聯明細</div>'+
@@ -864,14 +867,12 @@ function renderWalletsTab(){
   }).join("");
   document.getElementById("tabContent").innerHTML =
     '<div class="topbar"><div><h1>錢包</h1><p>追蹤現金、銀行帳戶與信用卡的即時餘額</p></div>'+
-      '<div class="topbar-actions">'+(isMain()?'<button class="btn gold" data-action="add-wallet">＋ 新增錢包</button>':'')+'</div></div>'+
-    (isMain()?"":'<div class="read-only-banner">👁 您目前為子帳號，僅能檢視錢包餘額，無法新增或修改。</div>')+
+      '<div class="topbar-actions"><button class="btn gold" data-action="add-wallet">＋ 新增錢包</button></div></div>'+
     '<div class="card card-pad stamp-card" style="margin-bottom:18px;"><div class="stamp"><small>總資產</small><div class="num" style="font-size:14px;font-weight:700;">'+fmtMoney(total)+'</div></div>'+
       '<div><div class="label" style="margin-bottom:4px;">所有啟用中錢包加總</div><div style="font-size:13px;color:var(--text-soft);">轉帳交易不會影響收支統計，只會反映在錢包餘額上。</div></div></div>'+
-    (cards||'<div class="empty-state"><div class="ico">👛</div><p>尚未建立任何錢包'+(isMain()?'，點選右上方「新增錢包」開始追蹤餘額。':'。')+'</p></div>');
+    (cards||'<div class="empty-state"><div class="ico">👛</div><p>尚未建立任何錢包，點選右上方「新增錢包」開始追蹤餘額。</p></div>');
 }
 function openWalletForm(wallet){
-  if(!isMain()) return;
   const isEdit=!!wallet;
   openModal('<button class="modal-close" data-action="modal-close">✕</button>'+
     '<h3>'+(isEdit?"編輯錢包":"新增錢包")+'</h3><p class="modal-sub">'+(isEdit?"修改錢包名稱、類型或起始餘額":"建立一個現金、銀行帳戶或信用卡")+'</p>'+
@@ -897,7 +898,6 @@ function openWalletForm(wallet){
   });
 }
 function deleteWallet(id){
-  if(!isMain()) return;
   const used=state.entries.filter(en=>en.walletId===id||en.fromWalletId===id||en.toWalletId===id).length;
   if(used>0){ toast("此錢包目前有 "+used+" 筆明細關聯，請先修改或刪除相關明細後再刪除錢包","error"); return; }
   const w=state.wallets.find(x=>x.id===id); if(!w) return;
@@ -916,23 +916,21 @@ function renderCategoriesTab(){
     const list=state.categories[type]||[];
     const cards=list.map(c=>{
       const usedCount=state.entries.filter(en=>en.type===type && en.categoryId===c.id).length;
-      const chips=(c.subs||[]).map(s=>'<span class="chip">'+escapeHtml(s.name)+(isMain()?'<button data-action="del-sub" data-type="'+type+'" data-cat="'+c.id+'" data-sub="'+s.id+'">✕</button>':'')+'</span>').join("");
+      const chips=(c.subs||[]).map(s=>'<span class="chip">'+escapeHtml(s.name)+'<button data-action="del-sub" data-type="'+type+'" data-cat="'+c.id+'" data-sub="'+s.id+'">✕</button></span>').join("");
       return '<div class="cat-card"><div class="cat-card-head"><span class="nm">'+escapeHtml(c.name)+'</span>'+
-        (isMain()?'<button class="btn ghost icon" data-action="del-cat" data-type="'+type+'" data-cat="'+c.id+'">🗑</button>':'<span style="font-size:11px;color:var(--text-faint);">'+usedCount+' 筆使用中</span>')+'</div>'+
+        '<button class="btn ghost icon" data-action="del-cat" data-type="'+type+'" data-cat="'+c.id+'">🗑</button></div>'+
         '<div class="chip-row">'+(chips||'<span style="font-size:12px;color:var(--text-faint);">尚無明細項目</span>')+'</div>'+
-        (isMain()?'<div class="chip-add"><input type="text" placeholder="新增明細項目" data-cat-input="'+c.id+'" data-type="'+type+'" maxlength="20"><button class="btn ghost small" data-action="add-sub" data-type="'+type+'" data-cat="'+c.id+'">新增</button></div>':"")+'</div>';
+        '<div class="chip-add"><input type="text" placeholder="新增明細項目" data-cat-input="'+c.id+'" data-type="'+type+'" maxlength="20"><button class="btn ghost small" data-action="add-sub" data-type="'+type+'" data-cat="'+c.id+'">新增</button></div></div>';
     }).join("");
     return '<div class="card card-pad"><div class="section-title">'+title+' <small>共 '+list.length+' 個分類</small></div>'+
       (cards||'<div class="empty-state" style="padding:24px;"><p>尚未設定任何分類</p></div>')+
-      (isMain()?'<div class="chip-add" style="margin-top:14px;"><input type="text" placeholder="新增'+title+'" id="newcat_'+type+'" maxlength="20"><button class="btn gold small" data-action="add-cat" data-type="'+type+'">新增分類</button></div>':"")+'</div>';
+      '<div class="chip-add" style="margin-top:14px;"><input type="text" placeholder="新增'+title+'" id="newcat_'+type+'" maxlength="20"><button class="btn gold small" data-action="add-cat" data-type="'+type+'">新增分類</button></div></div>';
   }
   document.getElementById("tabContent").innerHTML =
     '<div class="topbar"><div><h1>分類管理</h1><p>收入與支出的分類，可再向下建立明細項目</p></div></div>'+
-    (isMain()?"":'<div class="read-only-banner">👁 您目前為子帳號，僅能檢視分類設定，無法新增或修改。</div>')+
     '<div class="two-col">'+colHtml("income","收入分類")+colHtml("expense","支出分類")+'</div>';
 }
 async function addCategory(type){
-  if(!isMain()) return;
   const input=document.getElementById("newcat_"+type); const name=input.value.trim();
   if(!name){ toast("請輸入分類名稱","error"); return; }
   if(state.categories[type].some(c=>c.name.toLowerCase()===name.toLowerCase())){ toast("這個分類名稱已經存在","error"); return; }
@@ -940,7 +938,7 @@ async function addCategory(type){
   try{ await saveCategories(); toast("已新增分類「"+name+"」","success"); }catch(err){ toast("操作失敗："+explainError(err),"error"); }
 }
 async function addSub(type,catId,inputEl){
-  if(!isMain()) return; const name=inputEl.value.trim();
+  const name=inputEl.value.trim();
   if(!name){ toast("請輸入明細項目名稱","error"); return; }
   const cat=state.categories[type].find(c=>c.id===catId); if(!cat) return;
   if(cat.subs.some(s=>s.name.toLowerCase()===name.toLowerCase())){ toast("這個明細項目已經存在","error"); return; }
@@ -948,7 +946,6 @@ async function addSub(type,catId,inputEl){
   try{ await saveCategories(); toast("已新增明細項目「"+name+"」","success"); }catch(err){ toast("操作失敗："+explainError(err),"error"); }
 }
 async function deleteCategory(type,catId){
-  if(!isMain()) return;
   const used=state.entries.filter(en=>en.type===type && en.categoryId===catId).length;
   if(used>0){ toast("此分類目前有 "+used+" 筆明細使用中，請先修改或刪除相關明細後再刪除分類","error"); return; }
   showConfirm("確定要刪除這個分類嗎？相關的明細項目也會一併移除。", async ()=>{
@@ -957,7 +954,6 @@ async function deleteCategory(type,catId){
   }, {danger:true, confirmLabel:"刪除"});
 }
 async function deleteSub(type,catId,subId){
-  if(!isMain()) return;
   const used=state.entries.filter(en=>en.type===type && en.categoryId===catId && en.subId===subId).length;
   if(used>0){ toast("此明細項目目前有 "+used+" 筆明細使用中，請先處理後再刪除","error"); return; }
   const cat=state.categories[type].find(c=>c.id===catId);
