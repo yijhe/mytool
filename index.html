@@ -122,9 +122,8 @@ button{font-family:inherit;}
 .stat-card .delta.up{color:var(--credit);}
 .stat-card .delta.down{color:var(--debit);}
 .stamp-card{display:flex;align-items:center;gap:16px;}
-.stamp{width:64px;height:64px;border-radius:50%;border:2.5px solid var(--gold);flex-shrink:0;display:flex;flex-direction:column;align-items:center;justify-content:center;font-family:'Fraunces',serif;color:var(--gold-deep);position:relative;box-shadow:inset 0 0 0 3px rgba(184,146,74,0.12);transform:rotate(-4deg);}
-.stamp::after{content:"";position:absolute;inset:5px;border:1px dashed rgba(184,146,74,0.5);border-radius:50%;}
-.stamp small{font-size:9px;letter-spacing:.08em;}
+.stamp{width:72px;height:72px;border-radius:50%;border:2.5px solid var(--gold);flex-shrink:0;display:flex;flex-direction:column;align-items:center;justify-content:center;font-family:'Fraunces',serif;color:var(--gold-deep);position:relative;background:rgba(234,217,175,0.18);transform:rotate(-4deg);padding:6px;}
+.stamp small{font-size:9px;letter-spacing:.08em;line-height:1.2;}
 .bar-row{margin-bottom:12px;}
 .bar-row:last-child{margin-bottom:0;}
 .bar-row .bar-top{display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:5px;}
@@ -560,6 +559,7 @@ function renderTab(){
 function getPeriodRange(type,value){
   if(type==="day") return {start:parseDateInput(value), end:parseDateInput(value), label:fmtDateHuman(value)+" 當日"};
   if(type==="week"){ const {start,end}=isoWeekToRange(value); return {start,end,label:(start.getMonth()+1)+"/"+start.getDate()+" – "+(end.getMonth()+1)+"/"+end.getDate()+" 這一週"}; }
+  if(type==="year"){ const y=parseInt(value,10); const start=new Date(y,0,1); const end=new Date(y,11,31); return {start,end,label:y+" 年度統計"}; }
   const {start,end}=monthToRange(value); return {start,end,label:start.getFullYear()+" 年 "+(start.getMonth()+1)+" 月"};
 }
 function inRange(dateStr,start,end){ const s=fmtDateInput(start), e=fmtDateInput(end); return dateStr>=s && dateStr<=e; }
@@ -603,10 +603,12 @@ let overviewState={type:"day", value:todayStr()};
 function ensureOverviewDefault(){
   if(overviewState.type==="week" && !overviewState.value.includes("W")) overviewState.value=dateToISOWeekString(new Date());
   if(overviewState.type==="month" && overviewState.value.length!==7) overviewState.value=todayStr().slice(0,7);
+  if(overviewState.type==="year" && !/^\d{4}$/.test(overviewState.value)) overviewState.value=String(new Date().getFullYear());
 }
 function shiftOverviewPeriod(dir){
   if(overviewState.type==="day"){ const d=parseDateInput(overviewState.value); d.setDate(d.getDate()+dir); overviewState.value=fmtDateInput(d); }
   else if(overviewState.type==="week"){ const {start}=isoWeekToRange(overviewState.value); start.setDate(start.getDate()+dir*7); overviewState.value=dateToISOWeekString(start); }
+  else if(overviewState.type==="year"){ overviewState.value=String(parseInt(overviewState.value,10)+dir); }
   else { overviewState.value=shiftMonthStr(overviewState.value,dir); }
   renderOverviewTab();
 }
@@ -617,6 +619,7 @@ function renderOverviewTab(){
   let prevStart, prevEnd;
   if(overviewState.type==="day"){ prevStart=new Date(range.start); prevStart.setDate(prevStart.getDate()-1); prevEnd=prevStart; }
   else if(overviewState.type==="week"){ prevStart=new Date(range.start); prevStart.setDate(prevStart.getDate()-7); prevEnd=new Date(range.end); prevEnd.setDate(prevEnd.getDate()-7); }
+  else if(overviewState.type==="year"){ const py=parseInt(overviewState.value,10)-1; prevStart=new Date(py,0,1); prevEnd=new Date(py,11,31); }
   else { const r=monthToRange(shiftMonthStr(overviewState.value,-1)); prevStart=r.start; prevEnd=r.end; }
   const prev=aggregate(prevStart, prevEnd);
   function deltaHtml(curV,prevV){
@@ -634,7 +637,20 @@ function renderOverviewTab(){
     }).join("");
   }
   let chartHtml="";
-  if(overviewState.type!=="day"){
+  if(overviewState.type==="year"){
+    const year=parseInt(overviewState.value,10);
+    const monthAggs=Array.from({length:12},(_,mi)=>{
+      const s=new Date(year,mi,1), e=new Date(year,mi+1,0);
+      let inc=0, exp=0;
+      state.entries.forEach(en=>{ if(inRange(en.date,s,e)){ if(en.type==="income") inc+=Number(en.amount)||0; else if(en.type==="expense") exp+=Number(en.amount)||0; } });
+      return {mi, inc, exp};
+    });
+    const maxV=Math.max(1, ...monthAggs.map(a=>Math.max(a.inc,a.exp)));
+    chartHtml='<div class="chart-wrap"><div class="chart-columns">'+monthAggs.map(a=>{
+      const upH=Math.round((a.inc/maxV)*58), downH=Math.round((a.exp/maxV)*58);
+      return '<div class="chart-col" title="'+(a.mi+1)+'月 收入:'+fmtMoney(a.inc)+' 支出:'+fmtMoney(a.exp)+'"><div class="bars"><div class="bar-up" style="height:'+upH+'px"></div><div class="axis"></div><div class="bar-down" style="height:'+downH+'px"></div></div><div class="dlabel">'+(a.mi+1)+'月</div></div>';
+    }).join("")+'</div></div>';
+  } else if(overviewState.type!=="day"){
     const days=[]; let d=new Date(range.start);
     while(d<=range.end){ days.push(new Date(d)); d.setDate(d.getDate()+1); }
     const dayAggs=days.map(dd=>{ const ds=fmtDateInput(dd); let inc=0,exp=0;
@@ -669,12 +685,13 @@ function renderOverviewTab(){
       '<div class="topbar-actions"><div class="pill-toggle" id="periodTypeToggle">'+
         '<button data-ptype="day" class="'+(overviewState.type==="day"?"active":"")+'">日</button>'+
         '<button data-ptype="week" class="'+(overviewState.type==="week"?"active":"")+'">週</button>'+
-        '<button data-ptype="month" class="'+(overviewState.type==="month"?"active":"")+'">月</button></div></div></div>'+
+        '<button data-ptype="month" class="'+(overviewState.type==="month"?"active":"")+'">月</button>'+
+        '<button data-ptype="year" class="'+(overviewState.type==="year"?"active":"")+'">年</button></div></div></div>'+
     '<div class="period-bar"><div class="period-nav"><button data-action="ov-prev">‹</button><div class="period-label">'+periodInputHtml()+'</div><button data-action="ov-next">›</button></div></div>'+
     '<div class="stat-grid">'+
       '<div class="stat-card income"><div class="label">💰 收入合計</div><div class="value num">'+fmtMoney(cur.incomeTotal)+'</div>'+deltaHtml(cur.incomeTotal,prev.incomeTotal)+'</div>'+
       '<div class="stat-card expense"><div class="label">🧾 支出合計</div><div class="value num">'+fmtMoney(cur.expenseTotal)+'</div>'+deltaHtml(cur.expenseTotal,prev.expenseTotal)+'</div>'+
-      '<div class="card card-pad stamp-card"><div class="stamp"><small>結算</small><div class="num" style="font-size:15px;font-weight:700;">'+fmtMoney(cur.net)+'</div></div>'+
+      '<div class="card card-pad stamp-card"><div class="stamp"><small>結算</small><div class="num" style="font-size:13px;font-weight:700;text-align:center;word-break:break-all;line-height:1.2;">'+fmtMoney(cur.net)+'</div></div>'+
         '<div><div class="label" style="margin-bottom:4px;">淨額（收入－支出）</div><div style="font-size:13px;color:var(--text-soft);">'+(cur.net>=0?"本期收支為正，狀況良好。":"本期支出大於收入，請留意。")+'</div></div></div>'+
     '</div>'+
     walletCardHtml+
@@ -695,6 +712,7 @@ function renderOverviewTab(){
 function periodInputHtml(){
   if(overviewState.type==="day") return '<input type="date" id="ovValue" value="'+overviewState.value+'" style="border:1px solid var(--border);border-radius:8px;padding:6px 9px;font-size:13px;">';
   if(overviewState.type==="week") return '<input type="week" id="ovValue" value="'+overviewState.value+'" style="border:1px solid var(--border);border-radius:8px;padding:6px 9px;font-size:13px;">';
+  if(overviewState.type==="year") return '<input type="number" id="ovValue" value="'+overviewState.value+'" min="2000" max="2099" step="1" style="border:1px solid var(--border);border-radius:8px;padding:6px 9px;font-size:13px;width:90px;">';
   return '<input type="month" id="ovValue" value="'+overviewState.value+'" style="border:1px solid var(--border);border-radius:8px;padding:6px 9px;font-size:13px;">';
 }
 function bindOverviewEvents(){
@@ -704,6 +722,7 @@ function bindOverviewEvents(){
       if(t==="day") overviewState.value=todayStr();
       if(t==="week") overviewState.value=dateToISOWeekString(new Date());
       if(t==="month") overviewState.value=todayStr().slice(0,7);
+      if(t==="year") overviewState.value=String(new Date().getFullYear());
       renderOverviewTab();
     });
   });
@@ -926,7 +945,7 @@ function renderWalletsTab(){
   document.getElementById("tabContent").innerHTML =
     '<div class="topbar"><div><h1>錢包</h1><p>追蹤現金、銀行帳戶與信用卡的即時餘額</p></div>'+
       '<div class="topbar-actions"><button class="btn gold" data-action="add-wallet">＋ 新增錢包</button></div></div>'+
-    '<div class="card card-pad stamp-card" style="margin-bottom:18px;"><div class="stamp"><small>總資產</small><div class="num" style="font-size:14px;font-weight:700;">'+fmtMoney(total)+'</div></div>'+
+    '<div class="card card-pad stamp-card" style="margin-bottom:18px;"><div class="stamp"><small>總資產</small><div class="num" style="font-size:13px;font-weight:700;text-align:center;word-break:break-all;line-height:1.2;">'+fmtMoney(total)+'</div></div>'+
       '<div><div class="label" style="margin-bottom:4px;">所有啟用中錢包加總</div><div style="font-size:13px;color:var(--text-soft);">轉帳交易不會影響收支統計，只會反映在錢包餘額上。</div></div></div>'+
     (cards||'<div class="empty-state"><div class="ico">👛</div><p>尚未建立任何錢包，點選右上方「新增錢包」開始追蹤餘額。</p></div>');
 }
@@ -987,7 +1006,7 @@ function renderWalletDetail(walletId){
       '<div class="stat-card income"><div class="label">💰 存入合計</div><div class="value num">'+fmtMoney(incomeSum)+'</div></div>'+
       '<div class="stat-card expense"><div class="label">🧾 支出合計</div><div class="value num">'+fmtMoney(expenseSum)+'</div></div>'+
       '<div class="card card-pad stamp-card">'+
-        '<div class="stamp"><small>餘額</small><div class="num" style="font-size:14px;font-weight:700;'+(bal<0?'color:var(--debit);':'')+'">'+fmtMoney(bal)+'</div></div>'+
+        '<div class="stamp"><small>餘額</small><div class="num" style="font-size:13px;font-weight:700;text-align:center;word-break:break-all;line-height:1.2;'+(bal<0?'color:var(--debit);':'')+'">'+fmtMoney(bal)+'</div></div>'+
         '<div><div class="label" style="margin-bottom:4px;">目前餘額</div>'+
         '<div style="font-size:12.5px;color:var(--text-soft);">起始 '+fmtMoney(w.initialBalance)+'</div></div>'+
       '</div>'+
