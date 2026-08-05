@@ -122,8 +122,25 @@ button{font-family:inherit;}
 .stat-card .delta.up{color:var(--credit);}
 .stat-card .delta.down{color:var(--debit);}
 .stamp-card{display:flex;align-items:center;gap:16px;}
-.stamp{width:72px;height:72px;border-radius:50%;border:2.5px solid var(--gold);flex-shrink:0;display:flex;flex-direction:column;align-items:center;justify-content:center;font-family:'Fraunces',serif;color:var(--gold-deep);position:relative;background:rgba(234,217,175,0.18);transform:rotate(-4deg);padding:6px;}
-.stamp small{font-size:9px;letter-spacing:.08em;line-height:1.2;}
+/* net-badge 取代原有圓形 stamp，不受金額長度限制 */
+.net-badge{display:inline-flex;flex-direction:column;align-items:center;justify-content:center;
+  background:linear-gradient(135deg,rgba(184,146,74,0.14),rgba(184,146,74,0.06));
+  border:1.5px solid var(--gold);border-radius:12px;padding:10px 16px;min-width:72px;
+  transform:rotate(-2deg);flex-shrink:0;}
+.net-badge .nb-label{font-size:10px;font-weight:700;color:var(--gold-deep);letter-spacing:.1em;margin-bottom:5px;font-family:'Fraunces',serif;}
+.net-badge .nb-value{font-family:'IBM Plex Mono',monospace;font-size:15px;font-weight:700;color:var(--gold-deep);text-align:center;white-space:nowrap;}
+/* chart interactive */
+.chart-col{cursor:pointer;}
+.chart-col.sel .bar-up{opacity:1;filter:brightness(1.15);}
+.chart-col.sel .bar-down{opacity:1;filter:brightness(1.15);}
+.chart-col:not(.sel) .bar-up,.chart-col:not(.sel) .bar-down{opacity:.55;}
+.chart-info{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:12px 4px 0;font-size:12.5px;}
+.chart-info .ci-label{font-weight:700;color:var(--text);min-width:36px;}
+.chart-info .ci-inc{color:var(--credit);font-family:'IBM Plex Mono',monospace;font-weight:600;}
+.chart-info .ci-exp{color:var(--debit);font-family:'IBM Plex Mono',monospace;font-weight:600;}
+.chart-info .ci-net{font-family:'IBM Plex Mono',monospace;font-weight:700;}
+.chart-info .ci-sep{color:var(--border);}
+.chart-col.sel .dlabel{color:var(--text);font-weight:700;}
 .bar-row{margin-bottom:12px;}
 .bar-row:last-child{margin-bottom:0;}
 .bar-row .bar-top{display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:5px;}
@@ -633,36 +650,47 @@ function renderOverviewTab(){
     const rows=list.map(c=>({name:c.name, v:byCat[c.id]||0})).filter(r=>r.v>0).sort((a,b)=>b.v-a.v);
     if(rows.length===0) return '<div class="empty-state" style="padding:24px 10px;"><p>此期間沒有'+(type==="income"?"收入":"支出")+'紀錄</p></div>';
     return rows.map(r=>{ const pct=total>0?Math.round((r.v/total)*100):0;
-      return '<div class="bar-row"><div class="bar-top"><span class="nm">'+escapeHtml(r.name)+'</span><span class="v">'+fmtMoney(r.v)+'・'+pct+'%</span></div><div class="bar-track"><div class="bar-fill '+type+'" style="width:'+pct+'%"></div></div></div>';
+      return '<div class="bar-row"><div class="bar-top"><span class="nm">'+escapeHtml(r.name)+'</span><span class="v">'+fmtMoney(r.v)+'（'+pct+'%）</span></div><div class="bar-track"><div class="bar-fill '+type+'" style="width:'+pct+'%"></div></div></div>';
     }).join("");
   }
-  let chartHtml="";
+  function buildChartHtml(bars){
+    // bars: [{label, inc, exp}, ...]
+    const maxV=Math.max(1,...bars.map(a=>Math.max(a.inc,a.exp)));
+    const cols=bars.map((a,i)=>{
+      const upH=Math.round((a.inc/maxV)*58), downH=Math.round((a.exp/maxV)*58);
+      return '<div class="chart-col" data-ci="'+i+'"><div class="bars"><div class="bar-up" style="height:'+upH+'px"></div><div class="axis"></div><div class="bar-down" style="height:'+downH+'px"></div></div><div class="dlabel">'+a.label+'</div></div>';
+    }).join("");
+    // 預設顯示最後一筆
+    const def=bars[bars.length-1]||{label:"",inc:0,exp:0};
+    const defNet=def.inc-def.exp;
+    return '<div class="chart-wrap"><div class="chart-columns" id="chartCols">'+cols+'</div></div>'+
+      '<div class="chart-info" id="chartInfo">'+
+      '<span class="ci-label" id="ciLabel">'+escapeHtml(def.label)+'</span><span class="ci-sep">│</span>'+
+      '<span style="color:var(--text-soft);font-size:12px;">收入</span><span class="ci-inc" id="ciInc">'+fmtMoney(def.inc)+'</span><span class="ci-sep">│</span>'+
+      '<span style="color:var(--text-soft);font-size:12px;">支出</span><span class="ci-exp" id="ciExp">'+fmtMoney(def.exp)+'</span><span class="ci-sep">│</span>'+
+      '<span style="color:var(--text-soft);font-size:12px;">淨額</span><span class="ci-net" id="ciNet" style="'+(defNet>=0?'color:var(--credit)':'color:var(--debit)')+'">'+fmtMoney(defNet)+'</span>'+
+      '</div>';
+  }
+
+  let chartHtml="", chartBars=[];
   if(overviewState.type==="year"){
     const year=parseInt(overviewState.value,10);
-    const monthAggs=Array.from({length:12},(_,mi)=>{
+    chartBars=Array.from({length:12},(_,mi)=>{
       const s=new Date(year,mi,1), e=new Date(year,mi+1,0);
       let inc=0, exp=0;
       state.entries.forEach(en=>{ if(inRange(en.date,s,e)){ if(en.type==="income") inc+=Number(en.amount)||0; else if(en.type==="expense") exp+=Number(en.amount)||0; } });
-      return {mi, inc, exp};
+      return {label:(mi+1)+"月", inc, exp};
     });
-    const maxV=Math.max(1, ...monthAggs.map(a=>Math.max(a.inc,a.exp)));
-    chartHtml='<div class="chart-wrap"><div class="chart-columns">'+monthAggs.map(a=>{
-      const upH=Math.round((a.inc/maxV)*58), downH=Math.round((a.exp/maxV)*58);
-      return '<div class="chart-col" title="'+(a.mi+1)+'月 收入:'+fmtMoney(a.inc)+' 支出:'+fmtMoney(a.exp)+'"><div class="bars"><div class="bar-up" style="height:'+upH+'px"></div><div class="axis"></div><div class="bar-down" style="height:'+downH+'px"></div></div><div class="dlabel">'+(a.mi+1)+'月</div></div>';
-    }).join("")+'</div></div>';
+    chartHtml=buildChartHtml(chartBars);
   } else if(overviewState.type!=="day"){
     const days=[]; let d=new Date(range.start);
     while(d<=range.end){ days.push(new Date(d)); d.setDate(d.getDate()+1); }
-    const dayAggs=days.map(dd=>{ const ds=fmtDateInput(dd); let inc=0,exp=0;
+    chartBars=days.map(dd=>{ const ds=fmtDateInput(dd); let inc=0,exp=0;
       state.entries.forEach(en=>{ if(en.date===ds){ if(en.type==="income") inc+=Number(en.amount)||0; else exp+=Number(en.amount)||0; } });
-      return {date:dd, inc, exp};
+      const label=overviewState.type==="week"?["日","一","二","三","四","五","六"][dd.getDay()]:String(dd.getDate());
+      return {label, inc, exp};
     });
-    const maxV=Math.max(1, ...dayAggs.map(a=>Math.max(a.inc,a.exp)));
-    chartHtml='<div class="chart-wrap"><div class="chart-columns">'+dayAggs.map(a=>{
-      const upH=Math.round((a.inc/maxV)*58), downH=Math.round((a.exp/maxV)*58);
-      const label = overviewState.type==="week" ? ["日","一","二","三","四","五","六"][a.date.getDay()] : a.date.getDate();
-      return '<div class="chart-col" title="'+fmtMoney(a.inc)+' / -'+fmtMoney(a.exp)+'"><div class="bars"><div class="bar-up" style="height:'+upH+'px"></div><div class="axis"></div><div class="bar-down" style="height:'+downH+'px"></div></div><div class="dlabel">'+label+'</div></div>';
-    }).join("")+'</div></div>';
+    chartHtml=buildChartHtml(chartBars);
   }
   const memberRows=state.accounts.filter(a=>a.active).map(a=>{ const m=cur.byMember[a.id]||{income:0,expense:0}; return {name:a.name, role:a.role, income:m.income, expense:m.expense, net:m.income-m.expense}; }).filter(r=>r.income>0||r.expense>0);
 
@@ -691,7 +719,7 @@ function renderOverviewTab(){
     '<div class="stat-grid">'+
       '<div class="stat-card income"><div class="label">💰 收入合計</div><div class="value num">'+fmtMoney(cur.incomeTotal)+'</div>'+deltaHtml(cur.incomeTotal,prev.incomeTotal)+'</div>'+
       '<div class="stat-card expense"><div class="label">🧾 支出合計</div><div class="value num">'+fmtMoney(cur.expenseTotal)+'</div>'+deltaHtml(cur.expenseTotal,prev.expenseTotal)+'</div>'+
-      '<div class="card card-pad stamp-card"><div class="stamp"><small>結算</small><div class="num" style="font-size:13px;font-weight:700;text-align:center;word-break:break-all;line-height:1.2;">'+fmtMoney(cur.net)+'</div></div>'+
+      '<div class="card card-pad stamp-card"><div class="net-badge"><div class="nb-label">結算</div><div class="nb-value">'+(cur.net<0?'−':'+')+fmtMoney(Math.abs(cur.net))+'</div></div>'+
         '<div><div class="label" style="margin-bottom:4px;">淨額（收入－支出）</div><div style="font-size:13px;color:var(--text-soft);">'+(cur.net>=0?"本期收支為正，狀況良好。":"本期支出大於收入，請留意。")+'</div></div></div>'+
     '</div>'+
     walletCardHtml+
@@ -699,7 +727,7 @@ function renderOverviewTab(){
       '<div class="card card-pad"><div class="section-title">收入分類佔比</div>'+barsHtml(cur.byCatIncome,"income",cur.incomeTotal)+'</div>'+
       '<div class="card card-pad"><div class="section-title">支出分類佔比</div>'+barsHtml(cur.byCatExpense,"expense",cur.expenseTotal)+'</div>'+
     '</div>'+
-    (chartHtml?'<div class="card card-pad" style="margin-bottom:16px;"><div class="section-title">每日收支趨勢 <small>綠色為收入、紅色為支出</small></div>'+chartHtml+'</div>':"")+
+    (chartHtml?'<div class="card card-pad" style="margin-bottom:16px;"><div class="section-title">'+(overviewState.type==="year"?"每月":"每日")+'收支趨勢 <small>點選柱狀圖查看金額・綠色收入 紅色支出</small></div>'+chartHtml+'</div>':"")+
     '<div class="card card-pad"><div class="section-title">成員收支表</div>'+
       (memberRows.length===0?'<div class="empty-state" style="padding:20px;"><p>此期間尚無任何成員的記帳紀錄</p></div>':
       '<div class="table-wrap"><table><thead><tr><th>成員</th><th>身分</th><th style="text-align:right">收入</th><th style="text-align:right">支出</th><th style="text-align:right">淨額</th></tr></thead><tbody>'+
@@ -731,6 +759,27 @@ function bindOverviewEvents(){
   const prevBtn=document.querySelector("[data-action='ov-prev']"); const nextBtn=document.querySelector("[data-action='ov-next']");
   if(prevBtn) prevBtn.addEventListener("click", ()=>shiftOverviewPeriod(-1));
   if(nextBtn) nextBtn.addEventListener("click", ()=>shiftOverviewPeriod(1));
+
+  // 趨勢圖互動
+  const chartCols=document.getElementById("chartCols");
+  if(chartCols && chartBars.length>0){
+    function selectBar(idx){
+      chartCols.querySelectorAll(".chart-col").forEach((el,i)=>el.classList.toggle("sel", i===idx));
+      const b=chartBars[idx];
+      const net=b.inc-b.exp;
+      const lEl=document.getElementById("ciLabel"), iEl=document.getElementById("ciInc");
+      const eEl=document.getElementById("ciExp"), nEl=document.getElementById("ciNet");
+      if(lEl) lEl.textContent=b.label;
+      if(iEl) iEl.textContent=fmtMoney(b.inc);
+      if(eEl) eEl.textContent=fmtMoney(b.exp);
+      if(nEl){ nEl.textContent=fmtMoney(net); nEl.style.color=net>=0?"var(--credit)":"var(--debit)"; }
+    }
+    // 預設選最後一欄
+    selectBar(chartBars.length-1);
+    chartCols.querySelectorAll(".chart-col").forEach((el,i)=>{
+      el.addEventListener("click", ()=>selectBar(i));
+    });
+  }
 }
 
 /* =========================================================
@@ -945,7 +994,7 @@ function renderWalletsTab(){
   document.getElementById("tabContent").innerHTML =
     '<div class="topbar"><div><h1>錢包</h1><p>追蹤現金、銀行帳戶與信用卡的即時餘額</p></div>'+
       '<div class="topbar-actions"><button class="btn gold" data-action="add-wallet">＋ 新增錢包</button></div></div>'+
-    '<div class="card card-pad stamp-card" style="margin-bottom:18px;"><div class="stamp"><small>總資產</small><div class="num" style="font-size:13px;font-weight:700;text-align:center;word-break:break-all;line-height:1.2;">'+fmtMoney(total)+'</div></div>'+
+    '<div class="card card-pad stamp-card" style="margin-bottom:18px;"><div class="net-badge"><div class="nb-label">總資產</div><div class="nb-value">'+(total<0?'−':'+')+fmtMoney(Math.abs(total))+'</div></div>'+
       '<div><div class="label" style="margin-bottom:4px;">所有啟用中錢包加總</div><div style="font-size:13px;color:var(--text-soft);">轉帳交易不會影響收支統計，只會反映在錢包餘額上。</div></div></div>'+
     (cards||'<div class="empty-state"><div class="ico">👛</div><p>尚未建立任何錢包，點選右上方「新增錢包」開始追蹤餘額。</p></div>');
 }
@@ -1006,7 +1055,7 @@ function renderWalletDetail(walletId){
       '<div class="stat-card income"><div class="label">💰 存入合計</div><div class="value num">'+fmtMoney(incomeSum)+'</div></div>'+
       '<div class="stat-card expense"><div class="label">🧾 支出合計</div><div class="value num">'+fmtMoney(expenseSum)+'</div></div>'+
       '<div class="card card-pad stamp-card">'+
-        '<div class="stamp"><small>餘額</small><div class="num" style="font-size:13px;font-weight:700;text-align:center;word-break:break-all;line-height:1.2;'+(bal<0?'color:var(--debit);':'')+'">'+fmtMoney(bal)+'</div></div>'+
+        '<div class="net-badge" style="transform:rotate(-1deg);"><div class="nb-label">餘額</div><div class="nb-value" style="'+(bal<0?'color:var(--debit);':'')+'">'+fmtMoney(bal)+'</div></div>'+
         '<div><div class="label" style="margin-bottom:4px;">目前餘額</div>'+
         '<div style="font-size:12.5px;color:var(--text-soft);">起始 '+fmtMoney(w.initialBalance)+'</div></div>'+
       '</div>'+
