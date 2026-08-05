@@ -130,7 +130,7 @@ button{font-family:inherit;}
 .net-badge .nb-label{font-size:10px;font-weight:700;color:var(--gold-deep);letter-spacing:.1em;margin-bottom:5px;font-family:'Fraunces',serif;}
 .net-badge .nb-value{font-family:'IBM Plex Mono',monospace;font-size:15px;font-weight:700;color:var(--gold-deep);text-align:center;white-space:nowrap;}
 /* chart interactive */
-.chart-col{cursor:pointer;}
+.chart-col{cursor:pointer;touch-action:manipulation;-webkit-tap-highlight-color:transparent;padding:0 3px;margin:0 -3px;}
 .chart-col.sel .bar-up{opacity:1;filter:brightness(1.15);}
 .chart-col.sel .bar-down{opacity:1;filter:brightness(1.15);}
 .chart-col:not(.sel) .bar-up,.chart-col:not(.sel) .bar-down{opacity:.55;}
@@ -617,6 +617,7 @@ function totalNetWorth(){ return (state.wallets||[]).filter(w=>w.active).reduce(
    總覽分頁
 ========================================================= */
 let overviewState={type:"day", value:todayStr()};
+let chartBars=[];  // 模組層級，供 bindOverviewEvents 讀取
 function ensureOverviewDefault(){
   if(overviewState.type==="week" && !overviewState.value.includes("W")) overviewState.value=dateToISOWeekString(new Date());
   if(overviewState.type==="month" && overviewState.value.length!==7) overviewState.value=todayStr().slice(0,7);
@@ -672,7 +673,7 @@ function renderOverviewTab(){
       '</div>';
   }
 
-  let chartHtml="", chartBars=[];
+  let chartHtml=""; chartBars=[];  // 清空模組層級的 chartBars
   if(overviewState.type==="year"){
     const year=parseInt(overviewState.value,10);
     chartBars=Array.from({length:12},(_,mi)=>{
@@ -760,7 +761,7 @@ function bindOverviewEvents(){
   if(prevBtn) prevBtn.addEventListener("click", ()=>shiftOverviewPeriod(-1));
   if(nextBtn) nextBtn.addEventListener("click", ()=>shiftOverviewPeriod(1));
 
-  // 趨勢圖互動
+  // 趨勢圖互動：使用 pointerdown 確保手機觸控即時回應
   const chartCols=document.getElementById("chartCols");
   if(chartCols && chartBars.length>0){
     function selectBar(idx){
@@ -777,7 +778,7 @@ function bindOverviewEvents(){
     // 預設選最後一欄
     selectBar(chartBars.length-1);
     chartCols.querySelectorAll(".chart-col").forEach((el,i)=>{
-      el.addEventListener("click", ()=>selectBar(i));
+      el.addEventListener("pointerdown", (e)=>{ e.preventDefault(); selectBar(i); });
     });
   }
 }
